@@ -1,0 +1,53 @@
+@import "tailwindcss";
+
+@theme {
+  /* Light text colors for dark backgrounds */
+  --color-foreground: 248 250 252; /* slate-50 */
+  --color-muted-foreground: 203 213 225; /* slate-300 */
+  --color-card-foreground: 248 250 252; /* slate-50 */
+  --color-popover-foreground: 248 250 252; /* slate-50 */
+  --color-primary-foreground: 248 250 252; /* slate-50 */
+  --color-secondary-foreground: 248 250 252; /* slate-50 */
+  --color-accent-foreground: 248 250 252; /* slate-50 */
+  
+  /* Background colors */
+  --color-background: 15 23 42; /* slate-900 */
+  --color-card: 30 41 59; /* slate-800 */
+  --color-popover: 30 41 59; /* slate-800 */
+  --color-muted: 51 65 85; /* slate-700 */
+  --color-accent: 51 65 85; /* slate-700 */
+  --color-secondary: 51 65 85; /* slate-700 */
+  
+  /* Primary colors */
+  --color-primary: 59 130 246; /* blue-500 */
+  
+  /* Border colors */
+  --color-border: 51 65 85; /* slate-700 */
+  --color-input: 71 85 105; /* slate-600 */
+  --color-ring: 59 130 246; /* blue-500 */
+  
+  /* Destructive colors */
+  --color-destructive: 239 68 68; /* red-500 */
+  --color-destructive-foreground: 248 250 252; /* slate-50 */
+  
+  /* Input background */
+  --color-input-background: 30 41 59; /* slate-800 */
+}
+
+/* Base styles for all text elements */
+* {
+  color: rgb(var(--color-foreground));
+}
+
+/* Ensure form elements inherit the light text color */
+input,
+textarea,
+select,
+button {
+  color: rgb(var(--color-foreground));
+}
+
+/* Placeholder text should be lighter */
+::placeholder {
+  color: rgb(var(--color-muted-foreground) / 0.5);
+}

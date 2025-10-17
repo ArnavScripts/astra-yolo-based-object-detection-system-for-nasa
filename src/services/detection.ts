@@ -1,0 +1,225 @@
+import { projectId, publicAnonKey } from "../utils/supabase/info";
+
+export interface ModelConfig {
+  modelEndpoint: string;
+  apiKey: string;
+  modelType: "custom" | "roboflow" | "huggingface";
+}
+
+export interface Detection {
+  className: string;
+  confidence: number;
+  bbox: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+}
+
+async function resolveApiBase(): Promise<{
+  base: string;
+  authHeader?: string;
+}> {
+  const meta: any = import.meta as any;
+  const local = meta?.env?.VITE_LOCAL_API || "";
+  if (local) return { base: local.replace(/\/+$/, "") };
+
+  try {
+    // Avoid circular reference by importing dynamically
+    const { getModelConfig } = await import("./detection");
+    const cfg = await getModelConfig();
+    if (cfg && cfg.modelEndpoint) {
+      const header = cfg.apiKey ? `Bearer ${cfg.apiKey}` : undefined;
+      return {
+        base: cfg.modelEndpoint.replace(/\/+$/, ""),
+        authHeader: header,
+      };
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  return {
+    base: `https://${projectId}.supabase.co/functions/v1/make-server-ce7e8b87`,
+    authHeader: `Bearer ${publicAnonKey}`,
+  };
+}
+
+// Note: keep function order so getModelConfig exists when called normally.
+export async function getModelConfig(): Promise<ModelConfig | null> {
+  try {
+    // For this call we can use the supabase fallback directly without resolving saved config
+    const response = await fetch(
+      `https://${projectId}.supabase.co/functions/v1/make-server-ce7e8b87/model-config`,
+      {
+        headers: { Authorization: `Bearer ${publicAnonKey}` },
+      }
+    );
+    if (!response.ok) throw new Error("Failed to fetch model config");
+    const data = await response.json();
+    return data.config || null;
+  } catch (e) {
+    console.error("getModelConfig error", e);
+    return null;
+  }
+}
+
+export async function listServerPredictions(): Promise<{
+  success: boolean;
+  predictions: any[];
+}> {
+  try {
+    const resolved = await resolveApiBase();
+    const headers: Record<string, string> = {};
+    if (resolved.authHeader) headers["Authorization"] = resolved.authHeader;
+    const resp = await fetch(`${resolved.base}/predictions`, { headers });
+    if (!resp.ok) throw new Error("Failed to list predictions");
+    return await resp.json();
+  } catch (err) {
+    console.error("Error listing server predictions", err);
+    return { success: false, predictions: [] };
+  }
+}
+
+export async function saveModelConfig(config: ModelConfig): Promise<boolean> {
+  try {
+    const resolved = await resolveApiBase();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (resolved.authHeader) headers["Authorization"] = resolved.authHeader;
+    const response = await fetch(`${resolved.base}/model-config`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(config),
+    });
+    return response.ok;
+  } catch (e) {
+    console.error("saveModelConfig error", e);
+    return false;
+  }
+}
+
+export async function detectObjects(imageData: string): Promise<Detection[]> {
+  const resolved = await resolveApiBase();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (resolved.authHeader) headers["Authorization"] = resolved.authHeader;
+
+  const response = await fetch(`${resolved.base}/detect`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ imageData }),
+  });
+
+  if (!response.ok) {
+    const errData = await response
+      .json()
+      .catch(() => ({ error: response.statusText }));
+    throw new Error(
+      errData.error || `Detection failed: ${response.statusText}`
+    );
+  }
+
+  const data = await response.json();
+  if (!data.success) throw new Error(data.error || "Detection failed");
+  return normalizeDetections(data.detections || []);
+}
+
+export async function detectObjectsBatch(
+  images: string[]
+): Promise<Detection[][]> {
+  const resolved = await resolveApiBase();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (resolved.authHeader) headers["Authorization"] = resolved.authHeader;
+
+  const response = await fetch(`${resolved.base}/detect-batch`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ images }),
+  });
+
+  if (!response.ok) {
+    const errData = await response
+      .json()
+      .catch(() => ({ error: response.statusText }));
+    throw new Error(
+      errData.error || `Batch detection failed: ${response.statusText}`
+    );
+  }
+  const data = await response.json();
+  if (!data.success) throw new Error(data.error || "Batch detection failed");
+  return data.results.map((r: any) =>
+    r.success ? normalizeDetections(r.detections || []) : []
+  );
+}
+
+export async function testModelConnection(): Promise<{
+  success: boolean;
+  message: string;
+}> {
+  try {
+    const testImage =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+    await detectObjects(testImage);
+    return { success: true, message: "Model connection successful!" };
+  } catch (e: any) {
+    return { success: false, message: e?.message || String(e) };
+  }
+}
+
+function normalizeDetections(detections: any[]): Detection[] {
+  if (!Array.isArray(detections)) return [];
+  return detections.map((det: any) => {
+    const className =
+      det.class || det.className || det.label || det.name || "Unknown";
+    const confidence = det.confidence || det.score || det.probability || 0;
+    let bbox = { x: 0, y: 0, width: 0, height: 0 };
+    if (det.bbox) {
+      if (det.bbox.width !== undefined) {
+        bbox = {
+          x: det.bbox.x || 0,
+          y: det.bbox.y || 0,
+          width: det.bbox.width || 0,
+          height: det.bbox.height || 0,
+        };
+      } else if (det.bbox.x2 !== undefined) {
+        bbox = {
+          x: det.bbox.x1 || det.bbox.x || 0,
+          y: det.bbox.y1 || det.bbox.y || 0,
+          width: det.bbox.x2 - (det.bbox.x1 || det.bbox.x || 0) || 0,
+          height: det.bbox.y2 - (det.bbox.y1 || det.bbox.y || 0) || 0,
+        };
+      }
+    } else if (det.box) {
+      bbox = {
+        x: det.box.x || 0,
+        y: det.box.y || 0,
+        width: det.box.width || 0,
+        height: det.box.height || 0,
+      };
+    } else if (det.bounding_box) {
+      bbox = {
+        x: det.bounding_box.x || 0,
+        y: det.bounding_box.y || 0,
+        width: det.bounding_box.width || 0,
+        height: det.bounding_box.height || 0,
+      };
+    } else if (det.x !== undefined && det.y !== undefined) {
+      bbox = {
+        x: det.x - det.width / 2 || 0,
+        y: det.y - det.height / 2 || 0,
+        width: det.width || 0,
+        height: det.height || 0,
+      };
+    } else if (Array.isArray(det.coordinates)) {
+      const [x1, y1, x2, y2] = det.coordinates;
+      bbox = { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
+    }
+    return { className, confidence, bbox };
+  });
+}
